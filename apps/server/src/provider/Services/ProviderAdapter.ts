@@ -18,6 +18,7 @@ import type {
   ProviderSessionStartInput,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
+  RuntimeTaskId,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -145,6 +146,12 @@ export interface ProviderAdapterShape<TError> {
   readonly uploadFeedback?: (
     input: ProviderUploadFeedbackInput,
   ) => Effect.Effect<ProviderUploadFeedbackResult, TError>;
+
+  /**
+   * Stop one background task (such as a background shell) while the session
+   * keeps running, when the adapter supports it.
+   */
+  readonly stopTask?: (threadId: ThreadId, taskId: RuntimeTaskId) => Effect.Effect<void, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

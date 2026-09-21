@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  BackgroundShellRef,
   EventId,
   MessageId,
   ModelSelection,
@@ -2294,6 +2295,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const stopTask: ProviderServiceMethod<"stopTask"> = Effect.fn("stopTask")(function* (rawInput) {
+    const input = yield* decodeInputOrValidationError({
+      operation: "ProviderService.stopTask",
+      schema: BackgroundShellRef,
+      payload: rawInput,
+    });
+    const routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: "ProviderService.stopTask",
+      allowRecovery: false,
+    });
+    const stopAdapterTask = routed.adapter.stopTask;
+    if (stopAdapterTask === undefined) {
+      return yield* toValidationError(
+        "ProviderService.stopTask",
+        `Provider '${routed.adapter.provider}' does not support stopping background tasks.`,
+      );
+    }
+    if (!routed.isActive) {
+      return yield* toValidationError(
+        "ProviderService.stopTask",
+        "The session that started this task is no longer running.",
+      );
+    }
+    yield* Effect.annotateCurrentSpan({
+      "provider.operation": "stop-task",
+      "provider.kind": routed.adapter.provider,
+      "provider.thread_id": input.threadId,
+      "provider.task_id": input.taskId,
+    });
+    return yield* stopAdapterTask(input.threadId, input.taskId);
+  });
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     // Continuation is project-scopable, so decide it per session's project;
     // without orchestration the environment value is all there is.
@@ -2412,6 +2446,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
+    stopTask,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

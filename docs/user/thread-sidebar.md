@@ -131,6 +131,13 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+When a Claude agent starts a process in the background, such as a dev server or a
+test watcher, the right panel on web and desktop gets a tab with that process's
+live output. The tab takes the name of the local address the process announces,
+such as `localhost:8000`, and lets you open that address or stop the process.
+Commands the agent waits for keep their output in the conversation. To bring back
+closed process tabs, choose **Processes** from the right panel's add menu.
+
 ## Snooze until later
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your

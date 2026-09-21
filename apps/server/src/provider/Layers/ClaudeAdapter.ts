@@ -378,6 +378,9 @@ interface ClaudeTaskAgentState {
    * assistant snapshots (authoritative API model). */
   model: string | undefined;
   effort: string | undefined;
+  /** Background shells only: the launching Bash command and its log file. */
+  command: string | undefined;
+  outputFile: string | undefined;
 }
 
 /**
@@ -460,6 +463,7 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
+  readonly stopTask: (taskId: string) => Promise<void>;
   readonly close: () => void;
 }
 
@@ -1289,6 +1293,43 @@ function trimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+/** Same cap the SDK applies to shell commands in its task roster. */
+const BACKGROUND_SHELL_COMMAND_MAX_LENGTH = 1000;
+
+function backgroundShellCommand(input: Record<string, unknown> | undefined): string | undefined {
+  const command = trimmedString(input?.command);
+  return command && command.length > BACKGROUND_SHELL_COMMAND_MAX_LENGTH
+    ? `${command.slice(0, BACKGROUND_SHELL_COMMAND_MAX_LENGTH)}…`
+    : command;
+}
+
+const BACKGROUND_SHELL_OUTPUT_MARKER = "Output is being written to: ";
+
+/**
+ * Reads the log path from a backgrounded shell's placeholder tool result
+ * ("… Output is being written to: <tmp>/tasks/<taskId>.output. …"). Only a
+ * path ending in this task's own log file name is accepted.
+ */
+function parseBackgroundShellOutputFile(text: string, taskId: string): string | undefined {
+  const start = text.indexOf(BACKGROUND_SHELL_OUTPUT_MARKER);
+  if (start < 0) {
+    return undefined;
+  }
+  const pathStart = start + BACKGROUND_SHELL_OUTPUT_MARKER.length;
+  const fileName = `${taskId}.output`;
+  const fileNameStart = text.indexOf(fileName, pathStart);
+  return fileNameStart < 0 ? undefined : text.slice(pathStart, fileNameStart + fileName.length);
+}
+
+function taskShellFields(
+  agent: ClaudeTaskAgentState | undefined,
+): Pick<TaskAgentLinkage, "command" | "outputFile"> {
+  return {
+    ...(agent?.command ? { command: agent.command } : {}),
+    ...(agent?.outputFile ? { outputFile: agent.outputFile } : {}),
+  };
+}
+
 /**
  * SDK task usage ({total_tokens, tool_uses, duration_ms}, sometimes with
  * input/output/cache breakdowns) → the typed contract shape. Unknown or
@@ -1372,6 +1413,7 @@ function taskLinkageFor(
     ...(agent.toolUseId ? { toolUseId: agent.toolUseId } : {}),
     ...(agent.workflowName ? { workflowName: agent.workflowName } : {}),
     ...(agent.runHandles ? { runHandles: agent.runHandles } : {}),
+    ...taskShellFields(agent),
   };
 }
 
@@ -3311,6 +3353,58 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             owningAgentId: existing?.owningAgentId,
             model: existing?.model,
             effort: existing?.effort,
+            command: existing?.command,
+            outputFile: existing?.outputFile,
+          });
+        }
+      }
+
+      // A backgrounded shell returns a placeholder result that names its log
+      // file. task_notification only repeats that path at exit, so attach it
+      // now and let clients stream the log while the shell runs.
+      const backgroundTaskId = trimmedString(toolUseResult?.backgroundTaskId);
+      const backgroundOutputFile = backgroundTaskId
+        ? parseBackgroundShellOutputFile(toolResult.text, backgroundTaskId)
+        : undefined;
+      if (!toolResult.isError && backgroundTaskId && backgroundOutputFile) {
+        const existing = context.taskAgents.get(backgroundTaskId);
+        if (existing?.outputFile !== backgroundOutputFile) {
+          context.taskAgents.set(backgroundTaskId, {
+            taskId: backgroundTaskId,
+            toolUseId: existing?.toolUseId ?? tool.itemId,
+            description: existing?.description,
+            subagentType: existing?.subagentType,
+            taskType: existing?.taskType ?? "local_bash",
+            workflowName: existing?.workflowName,
+            skipTranscript: existing?.skipTranscript ?? false,
+            runHandles: existing?.runHandles,
+            owningAgentId: existing?.owningAgentId ?? tool.agentId,
+            model: existing?.model,
+            effort: existing?.effort,
+            command: existing?.command ?? backgroundShellCommand(tool.input),
+            outputFile: backgroundOutputFile,
+          });
+          const backgroundStamp = yield* makeEventStamp();
+          yield* offerRuntimeEvent({
+            type: "task.updated",
+            eventId: backgroundStamp.eventId,
+            provider: PROVIDER,
+            createdAt: backgroundStamp.createdAt,
+            threadId: context.session.threadId,
+            ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+            payload: {
+              taskId: RuntimeTaskId.make(backgroundTaskId),
+              isBackgrounded: true,
+              ...taskLinkageFor(context.taskAgents, backgroundTaskId),
+            },
+            providerRefs: nativeProviderRefs(context, {
+              providerItemId: tool.itemId,
+            }),
+            raw: {
+              source: "claude.sdk.message",
+              method: "claude/user",
+              payload: message,
+            },
           });
         }
       }
@@ -3747,6 +3841,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             : context.currentEffort);
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
+        const existingTaskAgent = context.taskAgents.get(message.task_id);
         context.taskAgents.set(message.task_id, {
           taskId: message.task_id,
           toolUseId: message.tool_use_id,
@@ -3755,10 +3850,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           taskType: message.task_type,
           workflowName: message.workflow_name,
           skipTranscript: message.skip_transcript === true,
-          runHandles: context.taskAgents.get(message.task_id)?.runHandles,
+          runHandles: existingTaskAgent?.runHandles,
           owningAgentId,
           model,
           effort,
+          command:
+            existingTaskAgent?.command ??
+            (message.task_type === "local_bash" ? backgroundShellCommand(launchInput) : undefined),
+          outputFile: existingTaskAgent?.outputFile,
         });
         context.liveTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
@@ -3775,6 +3874,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(effort ? { effort } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
             ...(message.workflow_name ? { workflowName: message.workflow_name } : {}),
+            ...taskShellFields(context.taskAgents.get(message.task_id)),
           },
         });
         return;
@@ -5296,6 +5396,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  // The CLI answers with a task_notification (status "stopped"), which flows
+  // through the usual task lifecycle events.
+  const stopTask: NonNullable<ClaudeAdapterShape["stopTask"]> = Effect.fn("stopTask")(
+    function* (threadId, taskId) {
+      const context = yield* requireSession(threadId);
+      yield* Effect.tryPromise({
+        try: () => context.query.stopTask(taskId),
+        catch: (cause) => toRequestError(threadId, "task/stop", cause),
+      });
+    },
+  );
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -5574,6 +5686,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     startSession,
     sendTurn,
     interruptTurn,
+    stopTask,
     readThread,
     rollbackThread,
     respondToRequest,

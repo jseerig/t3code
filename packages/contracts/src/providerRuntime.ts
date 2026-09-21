@@ -659,7 +659,13 @@ const taskAgentLinkageFields = {
   phases: Schema.optional(Schema.Array(TaskWorkflowPhase)),
   attempt: Schema.optional(NonNegativeInt),
   runHandles: Schema.optional(TaskRunHandles),
+  /**
+   * Log file of a background shell (Claude local_bash). Known from the moment
+   * the shell is backgrounded, so clients can stream it while it runs.
+   */
   outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Command line of a background shell, capped like the SDK's own summary. */
+  command: Schema.optional(TrimmedNonEmptyStringSchema),
   /** Codex agent hierarchy path, e.g. "/root/marlow". */
   agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
   /**

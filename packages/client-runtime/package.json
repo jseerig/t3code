@@ -203,6 +203,10 @@
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
     },
+    "./state/backgroundShells": {
+      "types": "./src/state/backgroundShells.ts",
+      "default": "./src/state/backgroundShells.ts"
+    },
     "./state/terminal": {
       "types": "./src/state/terminal.ts",
       "default": "./src/state/terminal.ts"

@@ -56,6 +56,8 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProviderUploadFeedbackError,
+  BackgroundShellLogError,
+  BackgroundShellStopError,
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
@@ -109,6 +111,11 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
+import {
+  BACKGROUND_SHELL_ACTIVITY_KINDS,
+  findBackgroundShellLogPath,
+  streamBackgroundShellLog,
+} from "./provider/backgroundShellLog.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
@@ -3432,6 +3439,50 @@ const makeWsRpcLayer = (
             WS_METHODS.previewAutomationFocusHost,
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
+          ),
+        [WS_METHODS.subscribeBackgroundShellLog]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeBackgroundShellLog,
+            Effect.gen(function* () {
+              const logError = (reason: "not-found" | "unreadable", cause?: unknown) =>
+                new BackgroundShellLogError({
+                  threadId: input.threadId,
+                  taskId: input.taskId,
+                  reason,
+                  ...(cause === undefined ? {} : { cause }),
+                });
+              const thread = yield* projectionSnapshotQuery
+                .getThreadDetailById(input.threadId, {
+                  activityKinds: BACKGROUND_SHELL_ACTIVITY_KINDS,
+                })
+                .pipe(Effect.mapError((cause) => logError("unreadable", cause)));
+              const logPath = Option.isSome(thread)
+                ? findBackgroundShellLogPath(thread.value.activities, input.taskId)
+                : undefined;
+              if (logPath === undefined) {
+                return yield* logError("not-found");
+              }
+              return streamBackgroundShellLog(logPath).pipe(
+                Stream.mapError((cause) => logError("unreadable", cause)),
+              );
+            }),
+            { "rpc.aggregate": "background-shell" },
+          ),
+        [WS_METHODS.backgroundShellStop]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.backgroundShellStop,
+            providerService.stopTask(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new BackgroundShellStopError({
+                    threadId: input.threadId,
+                    taskId: input.taskId,
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "background-shell" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {

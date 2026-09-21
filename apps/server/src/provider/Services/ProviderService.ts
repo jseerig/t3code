@@ -12,6 +12,7 @@
  * @module ProviderService
  */
 import type {
+  BackgroundShellRef,
   ProviderInterruptTurnInput,
   ProviderInstanceId,
   ProviderRespondToRequestInput,
@@ -127,6 +128,12 @@ export interface ProviderServiceShape {
   readonly uploadFeedback: (
     input: ProviderUploadFeedbackInput,
   ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
+
+  /**
+   * Stop one background task of the thread's running session. A stopped
+   * session already took its background tasks down, so it is never resumed.
+   */
+  readonly stopTask: (input: BackgroundShellRef) => Effect.Effect<void, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

@@ -29,6 +29,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "process",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,7 +86,9 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  /** Log of a background process the agent started; `title` starts as its command. */
+  | { id: `process:${string}`; kind: "process"; taskId: string; title: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -129,10 +132,25 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "process">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
+  /**
+   * Add a tab for a background process the agent started. With `reveal`, a
+   * closed panel opens on it; a panel showing another tab keeps its focus.
+   */
+  addProcess: (
+    ref: ScopedThreadRef,
+    process: { readonly taskId: string; readonly title: string },
+    reveal: boolean,
+  ) => void;
+  renameProcess: (ref: ScopedThreadRef, taskId: string, title: string) => void;
+  /** Bring back every process tab of the thread (e.g. after closing some) and show the newest. */
+  openProcesses: (
+    ref: ScopedThreadRef,
+    processes: ReadonlyArray<{ readonly taskId: string; readonly title: string }>,
+  ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
@@ -168,7 +186,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "process">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -180,7 +198,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "process">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -549,6 +567,63 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : surface,
             ),
           })),
+        ),
+      addProcess: (ref, process, reveal) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const id = `process:${process.taskId}` as const;
+            if (current.surfaces.some((entry) => entry.id === id)) return current;
+            const surface: RightPanelSurface = {
+              id,
+              kind: "process",
+              taskId: process.taskId,
+              title: process.title,
+            };
+            const showingOtherTab = current.isOpen && current.activeSurfaceId !== null;
+            return reveal && !showingOtherTab
+              ? upsertSurface(current, surface)
+              : { ...current, surfaces: [...current.surfaces, surface] };
+          }),
+        ),
+      openProcesses: (ref, processes) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const newest = processes.at(-1);
+            if (!newest) return current;
+            const missing = processes
+              .filter((process) =>
+                current.surfaces.every((entry) => entry.id !== `process:${process.taskId}`),
+              )
+              .map((process): RightPanelSurface => ({
+                id: `process:${process.taskId}`,
+                kind: "process",
+                taskId: process.taskId,
+                title: process.title,
+              }));
+            return {
+              ...current,
+              isOpen: true,
+              surfaces: [...current.surfaces, ...missing],
+              activeSurfaceId: `process:${newest.taskId}`,
+            };
+          }),
+        ),
+      renameProcess: (ref, taskId, title) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const id = `process:${taskId}`;
+            if (!current.surfaces.some((entry) => entry.id === id && entry.kind === "process")) {
+              return current;
+            }
+            return {
+              ...current,
+              surfaces: current.surfaces.map((surface) =>
+                surface.id === id && surface.kind === "process" && surface.title !== title
+                  ? { ...surface, title }
+                  : surface,
+              ),
+            };
+          }),
         ),
       openBrowser: (ref, tabId) =>
         set((state) =>

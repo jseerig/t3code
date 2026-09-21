@@ -226,6 +226,10 @@ import {
   deriveAgentPanelModel,
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { foldBackgroundShellActivities } from "@t3tools/client-runtime/state/backgroundShells";
+import { BackgroundShellPanel } from "./backgroundShells/BackgroundShellPanel";
+import { backgroundShellTabTitle } from "./backgroundShells/backgroundShells.logic";
+import { useBackgroundShellTabs } from "./backgroundShells/useBackgroundShellTabs";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -2926,6 +2930,22 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [agentSessionLive, threadActivities],
   );
+  // Processes the agent keeps running in the background; each gets a log tab.
+  const backgroundShells = useMemo(
+    () => foldBackgroundShellActivities(threadActivities, { sessionLive: agentSessionLive }),
+    [agentSessionLive, threadActivities],
+  );
+  useBackgroundShellTabs(isServerThread ? activeThreadRef : null, backgroundShells);
+  const addProcessesSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().openProcesses(
+      activeThreadRef,
+      backgroundShells.map((shell) => ({
+        taskId: shell.taskId,
+        title: backgroundShellTabTitle(shell, []),
+      })),
+    );
+  }, [activeThreadRef, backgroundShells]);
   const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
     () => derivePendingRequests(threadActivities),
     [threadActivities],
@@ -9666,6 +9686,15 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "process" && activeThreadRef ? (
+      <BackgroundShellPanel
+        key={renderedRightPanelSurface.id}
+        threadRef={activeThreadRef}
+        shell={
+          backgroundShells.find((shell) => shell.taskId === renderedRightPanelSurface.taskId) ??
+          null
+        }
+      />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -10328,6 +10357,8 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
+          onAddProcesses={addProcessesSurface}
+          processesAvailable={backgroundShells.length > 0}
           onAddDevice={addDeviceSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
@@ -10386,6 +10417,8 @@ export default function ChatView(props: ChatViewProps) {
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
+            onAddProcesses={addProcessesSurface}
+            processesAvailable={backgroundShells.length > 0}
             onAddDevice={addDeviceSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}

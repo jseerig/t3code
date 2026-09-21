@@ -142,6 +142,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
   [WS_METHODS.subscribeTerminalEvents]: AuthTerminalOperateScope,
   [WS_METHODS.subscribeTerminalMetadata]: AuthTerminalOperateScope,
+  // Same exposure as the agent's foreground tool output in the thread.
+  [WS_METHODS.subscribeBackgroundShellLog]: AuthOrchestrationReadScope,
+  [WS_METHODS.backgroundShellStop]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewOpen]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewNavigate]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewResize]: AuthOrchestrationOperateScope,

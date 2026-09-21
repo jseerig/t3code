@@ -12,6 +12,12 @@ import {
   ProviderSetupInput,
 } from "./providerSetup.ts";
 
+import {
+  BackgroundShellLogError,
+  BackgroundShellLogEvent,
+  BackgroundShellRef,
+  BackgroundShellStopError,
+} from "./backgroundShell.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -334,6 +340,9 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
 
+  // Background shell methods
+  backgroundShellStop: "backgroundShell.stop",
+
   // Preview methods
   previewOpen: "preview.open",
   previewNavigate: "preview.navigate",
@@ -431,6 +440,7 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
+  subscribeBackgroundShellLog: "subscribeBackgroundShellLog",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
@@ -1192,6 +1202,18 @@ const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, 
   stream: true,
 });
 
+const WsSubscribeBackgroundShellLogRpc = Rpc.make(WS_METHODS.subscribeBackgroundShellLog, {
+  payload: BackgroundShellRef,
+  success: BackgroundShellLogEvent,
+  error: Schema.Union([BackgroundShellLogError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsBackgroundShellStopRpc = Rpc.make(WS_METHODS.backgroundShellStop, {
+  payload: BackgroundShellRef,
+  error: Schema.Union([BackgroundShellStopError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(WS_METHODS.subscribeDiscoveredLocalServers, {
   payload: Schema.Struct({
     configuredUrls: Schema.optional(ConfiguredLocalServerUrls),
@@ -1493,6 +1515,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
+  WsSubscribeBackgroundShellLogRpc,
+  WsBackgroundShellStopRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
   WsDeviceListRpc,

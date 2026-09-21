@@ -23,6 +23,7 @@ import {
   Files,
   Globe2,
   Plus,
+  ScrollText,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -125,6 +126,9 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   deviceAvailable: boolean;
+  /** Reopens the log tabs of the thread's background processes. */
+  onAddProcesses?: () => void;
+  processesAvailable?: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -156,6 +160,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
   device: "Devices are only available from a thread.",
+  processes: "No background processes have run in this thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -180,6 +185,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: "No linked pull requests available.",
   agents: "Available from a thread.",
   device: "Available from a thread.",
+  processes: "Appears once the agent runs a background process.",
 } as const;
 
 type TabContextMenuAction =
@@ -328,6 +334,9 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   deviceAvailable: boolean;
+  /** Reopens the log tabs of the thread's background processes. */
+  onAddProcesses?: () => void;
+  processesAvailable?: boolean;
   liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -405,6 +414,16 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
+      badgeCount: 0,
+    },
+    {
+      label: "Processes",
+      description: "Logs of processes the agent runs in the background.",
+      icon: ScrollText,
+      shortcut: "O",
+      available: props.processesAvailable === true && props.onAddProcesses !== undefined,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.processes,
+      onClick: () => props.onAddProcesses?.(),
       badgeCount: 0,
     },
   ] as const;
@@ -631,6 +650,8 @@ function surfaceTitle(
       return "Agents";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "process":
+      return surface.title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -714,6 +735,8 @@ function SurfaceIcon({
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "process":
+      return <ScrollText className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -924,6 +947,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.deviceAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: "Processes",
+      icon: ScrollText,
+      shortcut: "O",
+      available: props.processesAvailable === true && props.onAddProcesses !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.processes,
+      onClick: () => props.onAddProcesses?.(),
     },
   ] as const;
 
@@ -1405,6 +1436,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
+            {...(props.onAddProcesses ? { onAddProcesses: props.onAddProcesses } : {})}
+            processesAvailable={props.processesAvailable === true}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (

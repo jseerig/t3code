@@ -70,6 +70,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setModelCalls: Array<string | undefined> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
+  public readonly stopTaskCalls: Array<string> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
 
@@ -117,6 +118,10 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
+  };
+
+  readonly stopTask = async (taskId: string): Promise<void> => {
+    this.stopTaskCalls.push(taskId);
   };
 
   readonly close = (): void => {
@@ -2226,6 +2231,111 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(completed?.type, "turn.completed");
       if (completed?.type === "turn.completed") {
         assert.equal(completed.payload.tokenUsage?.hasSubagents, true);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("attaches the command and live log file to a backgrounded shell task", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const outputFile = "/tmp/claude-501/-work-app/sdk-session/tasks/bg-shell-1.output";
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "start the dev server",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-shell",
+        uuid: "stream-shell-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-bash-1",
+            name: "Bash",
+            input: {
+              command: "npm run dev",
+              description: "Start the dev server",
+              run_in_background: true,
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-shell-1",
+        tool_use_id: "tool-bash-1",
+        description: "Start the dev server",
+        is_backgrounded: true,
+        task_type: "local_bash",
+        uuid: "bg-shell-1-started",
+        session_id: "sdk-session-shell",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-shell",
+        uuid: "bg-shell-1-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-bash-1",
+              content: `Command running in background with ID: bg-shell-1. Output is being written to: ${outputFile}. You will be notified when it completes.`,
+            },
+          ],
+        },
+        tool_use_result: { stdout: "", stderr: "", backgroundTaskId: "bg-shell-1" },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-shell",
+        uuid: "result-shell-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const started = runtimeEvents.find((event) => event.type === "task.started");
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.command, "npm run dev");
+        assert.equal(started.payload.outputFile, undefined);
+      }
+      const updated = runtimeEvents.find((event) => event.type === "task.updated");
+      assert.equal(updated?.type, "task.updated");
+      if (updated?.type === "task.updated") {
+        assert.equal(String(updated.payload.taskId), "bg-shell-1");
+        assert.equal(updated.payload.outputFile, outputFile);
+        assert.equal(updated.payload.command, "npm run dev");
+        assert.equal(updated.payload.taskType, "local_bash");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
